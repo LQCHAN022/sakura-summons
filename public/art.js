@@ -1,11 +1,13 @@
 // Renders catalog ASCII art into colored HTML.
 // Colors come from the item's base `color`, rectangular `paint` regions,
-// then per-character `glyphs` overrides. `blink` swaps in closed-eye text.
+// then per-character `glyphs` overrides. `blink` swaps in closed-eye text;
+// `blinkable` emits both eye states so a `.blinking` class can swap them without
+// re-rendering the whole art.
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
 const DEFAULT_COLOR = '#e8e6f0';
 
-export function renderArt(item, { blink = false, silhouette = false } = {}) {
+export function renderArt(item, { blink = false, blinkable = false, silhouette = false } = {}) {
   const rows = item.art.map((line) => [...line]);
   const height = rows.length;
   const width = rows[0]?.length ?? 0;
@@ -19,11 +21,13 @@ export function renderArt(item, { blink = false, silhouette = false } = {}) {
   }
 
   const replaced = new Set();
-  if (blink && item.blink) {
+  const closed = new Map();
+  if ((blink || blinkable) && item.blink) {
     for (const [r, c, text] of item.blink) {
       [...text].forEach((ch, i) => {
         if (rows[r] && c + i < width) {
-          rows[r][c + i] = ch;
+          if (blinkable) closed.set(r * 1000 + c + i, ch);
+          else rows[r][c + i] = ch;
           replaced.add(r * 1000 + c + i);
         }
       });
@@ -44,12 +48,20 @@ export function renderArt(item, { blink = false, silhouette = false } = {}) {
       if (buffer) html += current ? `<span style="color:${current}">${escape(buffer)}</span>` : escape(buffer);
       buffer = '';
     };
+    const span = (cls, color, text) => `<span class="${cls}" style="color:${color}">${escape(text)}</span>`;
     row.forEach((ch, c) => {
+      const key = r * 1000 + c;
+      if (closed.has(key)) {
+        flush();
+        current = null;
+        html += span('eo', glyphs[ch] || colors[r][c], ch) + span('ec', colors[r][c], closed.get(key));
+        return;
+      }
       if (ch === ' ') {
         buffer += ch; // spaces have no color, keep the current run going
         return;
       }
-      const color = (!replaced.has(r * 1000 + c) && glyphs[ch]) || colors[r][c];
+      const color = (!replaced.has(key) && glyphs[ch]) || colors[r][c];
       if (color !== current) {
         flush();
         current = color;

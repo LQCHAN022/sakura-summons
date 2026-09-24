@@ -88,7 +88,6 @@ let state = null;
 const econ = { serverGold: 0, at: 0, pendingClicks: 0, pendingGold: 0, inflightGold: 0, syncing: null };
 const ui = { tab: 'home', char: null, equip: null, equipKind: 'weapon', banner: 'character', busy: false };
 let loopsStarted = false;
-let stageArt = { open: '', closed: '' };
 
 const owned = (id) => state.inventory.find((row) => row.itemId === id);
 
@@ -240,8 +239,10 @@ function startLoops() {
   if (loopsStarted) return;
   loopsStarted = true;
 
+  let shownGold = '';
   const tick = () => {
-    if (state) $('#gold').textContent = fmt(displayGold());
+    const text = state ? fmt(displayGold()) : '';
+    if (state && text !== shownGold) $('#gold').textContent = shownGold = text;
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -252,17 +253,20 @@ function startLoops() {
 
   // Grey out buttons the player can't afford yet.
   setInterval(() => {
-    if (!state) return;
+    if (!state || document.hidden) return;
     const gold = displayGold();
     $$('[data-cost]').forEach((btn) => {
       btn.classList.toggle('poor', gold < Number(btn.dataset.cost));
     });
   }, 250);
 
+  // Blinking only swaps a class (see renderArt's `blinkable`), and skips while the
+  // player is clicking so it can't stutter the bump animation.
   const blink = () => {
-    if (state && ui.tab === 'home') {
-      $('#stage-art').innerHTML = stageArt.closed;
-      setTimeout(() => ($('#stage-art').innerHTML = stageArt.open), 140);
+    if (state && ui.tab === 'home' && performance.now() - fx.lastClick > 1000) {
+      const art = $('#stage-art');
+      art.classList.add('blinking');
+      setTimeout(() => art.classList.remove('blinking'), 140);
     }
     setTimeout(blink, 2500 + Math.random() * 3500);
   };
@@ -290,6 +294,7 @@ function startLoops() {
 
 function switchTab(tab) {
   ui.tab = tab;
+  if (tab !== 'home') clearClickFx();
   $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   $$('.tab').forEach((s) => s.classList.toggle('hidden', s.id !== `tab-${tab}`));
   if (state) renderTab();
@@ -317,8 +322,7 @@ function renderTopbar() {
 function renderHome() {
   const char = items.get(state.player.character);
   const row = owned(char.id);
-  stageArt = { open: renderArt(char), closed: renderArt(char, { blink: true }) };
-  $('#stage-art').innerHTML = stageArt.open;
+  $('#stage-art').innerHTML = renderArt(char, { blinkable: true });
   $('#stage').className = `stage r${char.rarity}`;
   stageRect = null; // art size may have changed
   $('#stage-name').innerHTML = `${esc(char.name)} <span class="stars r${char.rarity}">${stars(char.rarity)}</span>`;
@@ -373,75 +377,94 @@ function ascPips(asc) {
 
 // Human-speed cap: extra clicks inside a 1s sliding window are ignored entirely
 // (no gold, no effects). The server allows a little more to absorb sync jitter.
+// Times are the event's own timestamp, so input the browser delivers late (after a
+// slow frame) is judged by when it happened, and stale input is dropped rather
+// than spawning effects after the player has stopped.
 const MAX_CLICKS_PER_SEC = 15;
+const STALE_INPUT_MS = 100;
 const clickTimes = [];
-function allowClick(now) {
-  while (clickTimes.length && now - clickTimes[0] >= 1000) clickTimes.shift();
+function allowClick(t) {
+  if (performance.now() - t > STALE_INPUT_MS) return false;
+  while (clickTimes.length && t - clickTimes[0] >= 1000) clickTimes.shift();
   if (clickTimes.length >= MAX_CLICKS_PER_SEC) return false;
-  clickTimes.push(now);
+  clickTimes.push(t);
   return true;
 }
 
-// Click effects are queued and drawn at most once per animation frame, so a burst
-// of clicks can never build a backlog that keeps playing after the clicking stops.
+// Floaters and sparks are drawn on one <canvas>, so a burst never creates DOM nodes
+// or text-shadow paints over the art. Clicks are queued and spawned once per frame
+// (clicks in the same frame merge into one floater), and the loop stops as soon as
+// nothing is left alive.
 const MAX_FLOATERS = 8;
 const MAX_SPARKS = 18;
+const FLOATER_MS = 800;
+const SPARK_MS = 500;
+// Once clicking pauses this long, only the newest batch may finish its animation;
+// older effects fade out over FADE_MS.
+const PAUSE_MS = 150;
+const FADE_MS = 120;
 const SPARK_CHARS = ['✦', '✧', '*', '+', '·', '✿'];
-const fx = { queue: [], frame: 0, floaters: [], sparks: [], bump: null, flash: null };
+const fx = { queue: [], frame: 0, floaters: [], sparks: [], bump: null, flash: null, lastClick: -Infinity, batch: 0 };
+const fxCanvas = $('#fx-canvas');
+const fxCtx = fxCanvas.getContext('2d');
+let fxStyle = null;
 
-function clickStage(x, y) {
-  if (!state || !allowClick(performance.now())) return;
+function clickStage(x, y, t) {
+  if (!state || ui.tab !== 'home' || !allowClick(t)) return;
   const s = state.stats;
   const crit = Math.random() < s.critChance;
   const amount = s.clickValue * (crit ? s.critMult : 1);
   econ.pendingClicks++;
   econ.pendingGold += amount;
+  fx.lastClick = t;
   fx.queue.push({ x, y, amount, crit });
   if (!fx.frame) fx.frame = requestAnimationFrame(drawClickFx);
 }
 
-// Adds an effect element, evicting the oldest once the pool is full.
-function addFx(pool, max, el) {
-  if (pool.length >= max) pool.shift().remove();
-  pool.push(el);
-  el.addEventListener('animationend', () => {
-    el.remove();
-    const i = pool.indexOf(el);
-    if (i >= 0) pool.splice(i, 1);
-  }, { once: true });
-  $('#floaters').append(el);
+function clearClickFx() {
+  if (fx.frame) cancelAnimationFrame(fx.frame);
+  fx.frame = 0;
+  fx.queue = [];
+  fx.floaters = [];
+  fx.sparks = [];
+  fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
 }
 
-function drawClickFx() {
-  fx.frame = 0;
-  const batch = fx.queue;
-  fx.queue = [];
-  if (!batch.length || ui.tab !== 'home') return;
+function sizeFxCanvas() {
+  const { width, height } = stageBox();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(width * dpr);
+  const h = Math.round(height * dpr);
+  if (fxCanvas.width !== w || fxCanvas.height !== h) {
+    fxCanvas.width = w;
+    fxCanvas.height = h;
+  }
+  fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
 
-  // Clicks landing in the same frame merge into one floater.
+function spawnClickFx(batch, now) {
   const crit = batch.some((c) => c.crit);
   const total = batch.reduce((sum, c) => sum + c.amount, 0);
   const { x, y } = batch[batch.length - 1];
+  const id = ++fx.batch;
 
-  const f = document.createElement('div');
-  f.className = `floater${crit ? ' crit' : ''}`;
-  f.textContent = crit ? `CRIT! +${fmt(total)}` : `+${fmt(total)}`;
-  f.style.left = `${x + (Math.random() * 30 - 15)}px`;
-  f.style.top = `${y - 10}px`;
-  addFx(fx.floaters, MAX_FLOATERS, f);
+  fx.floaters.push({
+    id, born: now, crit,
+    text: crit ? `CRIT! +${fmt(total)}` : `+${fmt(total)}`,
+    x: x + (Math.random() * 30 - 15), y: y - 10,
+  });
+  if (fx.floaters.length > MAX_FLOATERS) fx.floaters.shift();
 
   for (let i = 0; i < (crit ? 6 : 2); i++) {
-    const p = document.createElement('div');
-    p.className = 'spark';
-    p.textContent = SPARK_CHARS[Math.floor(Math.random() * SPARK_CHARS.length)];
     const angle = Math.random() * Math.PI * 2;
     const dist = 30 + Math.random() * (crit ? 70 : 40);
-    p.style.left = `${x}px`;
-    p.style.top = `${y}px`;
-    p.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
-    p.style.setProperty('--dy', `${Math.sin(angle) * dist}px`);
-    addFx(fx.sparks, MAX_SPARKS, p);
+    fx.sparks.push({
+      id, born: now, x, y,
+      dx: Math.cos(angle) * dist, dy: Math.sin(angle) * dist,
+      ch: SPARK_CHARS[Math.floor(Math.random() * SPARK_CHARS.length)],
+    });
   }
+  if (fx.sparks.length > MAX_SPARKS) fx.sparks.splice(0, fx.sparks.length - MAX_SPARKS);
 
   // Web Animations restart without forcing a layout of the (large) art <pre>.
   fx.bump?.cancel();
@@ -457,6 +480,71 @@ function drawClickFx() {
   }
 }
 
+const easeOut = (p) => 1 - (1 - p) ** 3;
+
+function drawClickFx(now) {
+  fx.frame = 0;
+  if (ui.tab !== 'home') return clearClickFx();
+
+  const batch = fx.queue;
+  fx.queue = [];
+  if (batch.length) spawnClickFx(batch, now);
+
+  const fade = Math.max(0, now - fx.lastClick - PAUSE_MS) / FADE_MS;
+  const fadeOf = (p) => (p.id === fx.batch ? 1 : 1 - fade);
+  const alive = (p, life) => now - p.born < life && fadeOf(p) > 0;
+  fx.floaters = fx.floaters.filter((p) => alive(p, FLOATER_MS));
+  fx.sparks = fx.sparks.filter((p) => alive(p, SPARK_MS));
+
+  sizeFxCanvas();
+  const ctx = fxCtx;
+  ctx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
+  fxStyle ??= (() => {
+    const css = getComputedStyle(document.documentElement);
+    return {
+      font: getComputedStyle(document.body).fontFamily,
+      mono: css.getPropertyValue('--mono').trim() || 'monospace',
+      gold: css.getPropertyValue('--gold').trim() || '#ffd166',
+    };
+  })();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Sparks fly outward and fade.
+  ctx.font = `16px ${fxStyle.mono}`;
+  ctx.fillStyle = '#ffe08a';
+  for (const p of fx.sparks) {
+    const t = easeOut((now - p.born) / SPARK_MS);
+    ctx.globalAlpha = (1 - t) * fadeOf(p);
+    ctx.fillText(p.ch, p.x + p.dx * t, p.y + p.dy * t);
+  }
+
+  // Floaters pop in, then rise and fade.
+  for (const p of fx.floaters) {
+    const t = easeOut((now - p.born) / FLOATER_MS);
+    const size = p.crit ? 25.6 : 17.6;
+    let alpha, rise, scale;
+    if (t < 0.15) {
+      const k = t / 0.15;
+      [alpha, rise, scale] = [k, 0.3 + 0.3 * k, 0.7 + 0.4 * k];
+    } else {
+      const k = (t - 0.15) / 0.85;
+      [alpha, rise, scale] = [1 - k, 0.6 + 2 * k, 1.1 - 0.1 * k];
+    }
+    ctx.globalAlpha = alpha * fadeOf(p);
+    ctx.font = `800 ${size * scale}px ${fxStyle.font}`;
+    ctx.shadowColor = p.crit ? 'rgba(255, 93, 143, 0.7)' : 'rgba(0, 0, 0, 0.7)';
+    ctx.shadowBlur = p.crit ? 12 : 6;
+    ctx.shadowOffsetY = p.crit ? 0 : 2;
+    ctx.fillStyle = p.crit ? '#ff5d8f' : fxStyle.gold;
+    ctx.fillText(p.text, p.x, p.y - (rise - 0.5) * size * 1.2);
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowColor = 'transparent';
+
+  if (fx.floaters.length || fx.sparks.length) fx.frame = requestAnimationFrame(drawClickFx);
+}
+
 // Cached so pointerdown never triggers a synchronous layout.
 let stageRect = null;
 const stageBox = () => (stageRect ??= $('#stage').getBoundingClientRect());
@@ -465,14 +553,14 @@ window.addEventListener('scroll', () => (stageRect = null), { passive: true });
 
 $('#stage').addEventListener('pointerdown', (e) => {
   const rect = stageBox();
-  clickStage(e.clientX - rect.left, e.clientY - rect.top);
+  clickStage(e.clientX - rect.left, e.clientY - rect.top, e.timeStamp);
 });
 document.addEventListener('keydown', (e) => {
   if (e.code !== 'Space' || e.repeat || ui.tab !== 'home' || !state) return;
   if (!$('#modal').classList.contains('hidden') || e.target.matches('input, textarea, button')) return;
   e.preventDefault();
   const rect = stageBox();
-  clickStage(rect.width / 2 + (Math.random() * 80 - 40), rect.height / 2 + (Math.random() * 60 - 30));
+  clickStage(rect.width / 2 + (Math.random() * 80 - 40), rect.height / 2 + (Math.random() * 60 - 30), e.timeStamp);
 });
 document.addEventListener('keydown', (e) => e.key === 'Escape' && closeModal());
 

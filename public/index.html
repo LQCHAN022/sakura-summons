@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sakura Summons</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌸</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="petals" aria-hidden="true"></div>
+
+  <!-- ============================================================ auth -->
+  <section id="auth-view" class="view hidden">
+    <pre class="logo" aria-label="Sakura Summons">
+  ___       _                   ___
+ / __| __ _| |___  _ _ _ __ _  / __|_  _ _ __  _ __  ___ _ _  ___
+ \__ \/ _` | / / || | '_/ _` | \__ \ || | '  \| '  \/ _ \ ' \(_-&lt;
+ |___/\__,_|_\_\\_,_|_| \__,_| |___/\_,_|_|_|_|_|_|_\___/_||_/__/</pre>
+    <p class="tagline">An idle clicker of summons, steel and sakura ✿</p>
+    <div class="auth-layout">
+      <form id="auth-form" class="panel auth-panel" novalidate>
+        <div class="seg" role="tablist">
+          <button type="button" data-mode="login" class="active">Log in</button>
+          <button type="button" data-mode="signup">Sign up</button>
+        </div>
+        <label>Username
+          <input name="username" autocomplete="username" maxlength="20" required>
+        </label>
+        <label>Password
+          <input name="password" type="password" autocomplete="current-password" maxlength="200" required>
+        </label>
+        <p class="error" id="auth-error" role="alert"></p>
+        <button class="btn primary big" type="submit" id="auth-submit">Log in</button>
+        <p class="muted small" id="auth-hint">New here? Sign up to get Hana and a Wooden Sword to start.</p>
+      </form>
+      <pre id="auth-art" class="art auth-art" aria-hidden="true"></pre>
+    </div>
+  </section>
+
+  <!-- ============================================================ game -->
+  <section id="game-view" class="view hidden">
+    <header class="topbar">
+      <div class="brand">✿ Sakura Summons</div>
+      <div class="wallet" title="Gold">
+        <span class="coin">◎</span><span id="gold">0</span>
+      </div>
+      <div class="rates">
+        <span><b id="per-click">0</b> / click</span>
+        <span><b id="per-sec">0</b> / sec</span>
+      </div>
+      <div class="user">
+        <span id="username"></span>
+        <button class="btn ghost small" id="logout">Log out</button>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button data-tab="home" class="active">Adventure</button>
+      <button data-tab="characters">Characters</button>
+      <button data-tab="equipment">Equipment</button>
+      <button data-tab="gacha">Summon</button>
+      <button data-tab="ranking">Ranking</button>
+      <button data-tab="profile">Profile</button>
+    </nav>
+
+    <main>
+      <section id="tab-home" class="tab">
+        <div class="home">
+          <div class="panel stage-panel">
+            <div class="stage-head">
+              <div>
+                <h2 id="stage-name"></h2>
+                <div class="muted" id="stage-title"></div>
+              </div>
+              <div class="stage-level" id="stage-level"></div>
+            </div>
+            <div class="stage" id="stage" tabindex="0" aria-label="Click to earn gold">
+              <pre class="art stage-art" id="stage-art"></pre>
+              <div class="stage-flash" id="stage-flash"></div>
+              <div class="floaters" id="floaters"></div>
+            </div>
+            <p class="hint">Click your character (or press <kbd>Space</kbd>) to earn gold</p>
+            <p class="quote" id="stage-quote"></p>
+          </div>
+          <aside class="side">
+            <div class="panel">
+              <h3>Loadout</h3>
+              <div id="loadout" class="loadout"></div>
+            </div>
+            <div class="panel">
+              <h3>Stats</h3>
+              <dl id="stats" class="stats"></dl>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="tab-characters" class="tab hidden">
+        <div class="collection">
+          <div class="grid" id="char-grid"></div>
+          <div class="panel detail" id="char-detail"></div>
+        </div>
+      </section>
+
+      <section id="tab-equipment" class="tab hidden">
+        <div class="seg filters" id="equip-filters">
+          <button data-kind="weapon" class="active">Weapons</button>
+          <button data-kind="armor">Armor</button>
+          <button data-kind="accessory">Accessories</button>
+        </div>
+        <div class="collection">
+          <div class="grid" id="equip-grid"></div>
+          <div class="panel detail" id="equip-detail"></div>
+        </div>
+      </section>
+
+      <section id="tab-gacha" class="tab hidden">
+        <div class="banner-list" id="banner-list"></div>
+        <div class="panel banner-view" id="banner-view"></div>
+        <div class="panel">
+          <h3>Recent summons</h3>
+          <ol class="history" id="history"></ol>
+        </div>
+      </section>
+
+      <section id="tab-ranking" class="tab hidden">
+        <div class="panel">
+          <h3>Top earners</h3>
+          <table class="leaderboard" id="leaderboard"></table>
+        </div>
+      </section>
+
+      <section id="tab-profile" class="tab hidden">
+        <div class="profile">
+          <div class="panel">
+            <h3>Adventurer</h3>
+            <dl class="stats" id="profile-stats"></dl>
+          </div>
+          <form class="panel" id="password-form">
+            <h3>Change password</h3>
+            <label>Current password <input type="password" name="currentPassword" autocomplete="current-password" required></label>
+            <label>New password <input type="password" name="newPassword" autocomplete="new-password" minlength="6" required></label>
+            <button class="btn primary" type="submit">Update password</button>
+          </form>
+          <form class="panel danger" id="delete-form">
+            <h3>Delete account</h3>
+            <p class="muted small">This permanently deletes your account, gold and collection.</p>
+            <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+            <label class="check"><input type="checkbox" name="confirm" required> I understand this can't be undone</label>
+            <button class="btn danger" type="submit">Delete my account</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </section>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-box panel" id="modal-box"></div>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

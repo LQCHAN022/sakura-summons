@@ -1,0 +1,18 @@
+{
+  "name": "ascii-gacha-idle",
+  "version": "1.0.0",
+  "description": "Anime-themed idle clicker with gacha, ASCII art characters and equipment",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.2.1"
+  }
+}
